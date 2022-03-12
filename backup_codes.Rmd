@@ -1,0 +1,70 @@
+---
+title: "backup_codes"
+author: "Abu Naweem Khan"
+date: "12/2/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+### 10-Fold CV with Support Vector Machine
+
+svm_data = tree_data
+
+for (i in 0:9) {
+  
+  ### Split data
+  
+  ind = partitions == i
+  test_data = svm_data[ind, ]
+  train_data = svm_data[-ind, ]
+  
+  ### Model for SVM
+  
+  set.seed(1)
+  
+  model.svm = svm(disease~age+heartRate, data = train_data, kernel = "linear", scale = FALSE)
+  
+  pred = predict(model.svm, test_data[, c(1,9,15)])
+  
+  cm.svm = cm.svm + table(pred, test_data[,15])
+  
+}
+
+### Accuracy of Support Vector Machine
+
+print(c("Precision:", precision(cm.svm)))
+print(c("Recall:", recall(cm.svm)))
+print(c("Accuracy:", accuracy(cm.svm)))
+
+
+
+
+### Heartrate by Age for Gender 0 with disease as color
+
+temp_data = bcw_data %>%
+  filter(unifCellShape==1 | unifCellShape==2 | unifCellShape==3 | unifCellShape==5 | unifCellShape==6)
+
+plt.1.g0 = ggplot(data = temp_data) +
+            geom_point(aes(x = unifCellSize, y = BareNuclei, color = Diagnosis)) +
+            labs(title = "HeartRate by Age for Gender 0")
+
+
+### Heartrate by Age for Gender 1 with disease as color
+
+temp_data = bcw_data %>%
+  filter(!(unifCellShape==1 | unifCellShape==2 | unifCellShape==3 | unifCellShape==5 | unifCellShape==6))
+
+plt.1.g1 = ggplot(data = temp_data) +
+            geom_point(aes(x = unifCellSize, y = BareNuclei, color = Diagnosis)) +
+            labs(title = "HeartRate by Age for Gender 1")
+
+
+
+
+
+```

@@ -1,0 +1,627 @@
+---
+title: "CIS 635 Project Part 1"
+author: "Abu Naweem Khan, Sayed Muhammad Saifuddin"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Utility Functions
+```{r}
+
+precision = function(tbl) {
+  denom = (tbl[2,1]+tbl[2,2])
+  if(denom == 0){
+    return (NA)
+  }
+  return ((tbl[2,2]/denom) * 100)
+}
+
+recall = function(tbl) {
+  denom = (tbl[1,2]+tbl[2,2])
+  if(denom == 0){
+    return (NA)
+  }
+  return ((tbl[2,2]/denom) * 100)
+}
+
+accuracy = function(tbl) {
+  return (((tbl[1,1]+tbl[2,2])/(tbl[1,1]+tbl[1,2]+tbl[2,1]+tbl[2,2])) * 100)
+}
+
+minmax=function(v){
+  mx=max(v);
+  mn=min(v);
+  return((v-mn)/(mx-mn))
+}
+
+```
+
+# Exploratory analysis of data
+
+# Load Data
+
+```{r}
+projData1a = read.table("projData1a.txt", header = TRUE)
+projData1b = read.table("projData1b.txt", header = TRUE)
+
+dim(projData1a)
+dim(projData1b)
+
+
+```
+
+# Merge and Clean data
+
+```{r}
+
+### Merge data
+
+merged_data = merge(projData1a, projData1b, by = "id")
+dim(merged_data)
+
+summary(merged_data[,11:15])
+
+
+### Removing Noise
+
+for(i in 11:15) {
+  ind = merged_data[,i]<0 | merged_data[,i]>100
+  merged_data = merged_data[!ind, ]
+}
+
+summary(merged_data[,11:15])
+
+
+### Count missing data by columns
+
+na_counts = 1:ncol(merged_data)
+
+for(i in 1:length(na_counts)){
+  na_counts[i] = 0
+}
+
+for (j in 2:ncol(merged_data)) {
+  for (i in 1:nrow(merged_data)) {
+    if (is.na(merged_data[i, j])) {
+      na_counts[j] = na_counts[j] + 1
+    }
+  }
+}
+
+rbind(colnames(merged_data), na_counts)
+
+
+### Check the classifier for the unavailable Heart Rate data
+
+merged_data[,16] = as.factor(merged_data[,16])
+
+
+# Check Class for NA data
+
+summary(merged_data[is.na(merged_data[,10]), 16])
+
+
+# Separate Heart Rate data without NA
+
+hr_wot_na = merged_data[!is.na(merged_data[,10]),c(10,16)]
+
+
+# Check the Means
+
+rbind(c("Mean Heartrate", "Mean Heartrate with disease", "Mean Heartrate without disease"),
+      c(mean(hr_wot_na[,1]), mean(hr_wot_na[hr_wot_na[,2]==1,1]), mean(hr_wot_na[hr_wot_na[,2]==0,1])))
+
+
+# Use Mean Heart Rate of people with disease to fill NA Heart Rates with the same class
+
+merged_data[is.na(merged_data[,10]) & merged_data[,16] == 1 ,10] = mean(hr_wot_na[hr_wot_na[,2]==1,1])
+
+
+# Use Mean Heart Rate of people without disease to fill NA Heart Rates with the same class
+
+merged_data[is.na(merged_data[,10]) & merged_data[,16] == 0 ,10] = mean(hr_wot_na[hr_wot_na[,2]==0,1])
+
+
+### Verify if all NA is filled
+
+length(merged_data[is.na(merged_data[,10]),10])
+
+
+### Data type validation
+
+data_to_validate = merged_data
+  
+for (j in c(2,8:15)) {
+  data_to_validate[ , j] = as.numeric(data_to_validate[ , j])
+}
+for (j in c(3:7, 16)) {
+  data_to_validate[ , j] = as.factor(data_to_validate[ , j])
+}
+
+
+### Summary Analysis
+
+summary(data_to_validate)
+
+
+```
+
+
+# Smpales for Data separation
+
+```{r}
+
+set.seed(1)
+
+partitions = sample(nrow(merged_data)) %% 10
+
+table(partitions)
+
+
+```
+
+
+# 10-Fold Cross Validation
+
+```{r}
+
+### Include required libraries
+
+library(rpart.plot)
+library(e1071)
+library(nnet)
+library(fpc)
+library(NeuralNetTools)
+library(dplyr)
+
+tbl = matrix(c(0,0,0,0), nrow = 2, byrow = TRUE)
+colnames(tbl) = c("actual(0)","actual(1)")
+rownames(tbl) = c("prediction(0)", "prediction(1)")
+
+
+### 10-Fold CV with Decision tree
+
+tree_data = merged_data[-1]
+
+
+### change data for decision tree
+  
+for (j in c(1,7:14)) {
+  tree_data[ , j] = as.numeric(tree_data[ , j])
+}
+for (j in c(2:6, 15)) {
+  tree_data[ , j] = as.factor(tree_data[ , j])
+}
+
+cm.decision_tree = tbl
+
+for (i in 0:9){
+
+  ### Split data
+  
+  ind = partitions == i
+  test_data = tree_data[ind, ]
+  train_data = tree_data[-ind, ]
+  
+  
+  ### Model for Decision Tree
+  
+  set.seed(1)
+  
+  model.decision_tree = rpart(disease~., data = train_data)
+  
+  pred = predict(model.decision_tree, select(test_data, -disease), type = "class")
+  
+  cm.decision_tree = cm.decision_tree + table(pred, test_data$disease)
+  
+}
+
+rpart.plot(model.decision_tree)
+
+### Confusion matrix
+
+cm.decision_tree
+
+
+### Accuracy of Decision Tree
+
+print(c("Precision:", precision(cm.decision_tree)))
+print(c("Recall:", recall(cm.decision_tree)))
+print(c("Accuracy:", accuracy(cm.decision_tree)))
+
+
+### 10-Fold CV with Naive Bayes
+
+nv_data = tree_data
+
+cm.naive_bayes = tbl
+
+for (i in 0:9) {
+  
+  ### Split data
+  
+  ind = partitions == i
+  test_data = nv_data[ind, ]
+  train_data = nv_data[-ind, ]
+  
+  
+  ### Model for Naive Bayes
+  
+  set.seed(1)
+  
+  model.naive_bayes = naiveBayes(disease~., data = train_data)
+  
+  pred = predict(model.naive_bayes, select(test_data, -disease))
+  
+  cm.naive_bayes = cm.naive_bayes + table(pred, test_data$disease)
+  
+}
+
+### Confusion matrix
+
+cm.naive_bayes
+
+
+### Accuracy of Naive Byes
+
+print(c("Precision:", precision(cm.naive_bayes)))
+print(c("Recall:", recall(cm.naive_bayes)))
+print(c("Accuracy:", accuracy(cm.naive_bayes)))
+
+
+### 10-Fold CV with ANN
+
+ann_data = merged_data[-1]
+
+cm.ann = tbl
+
+for (i in 0:9) {
+  
+  ### Split data
+  
+  ind = partitions == i
+  test_data = ann_data[ind, ]
+  train_data = ann_data[-ind, ]
+  
+  ### Model for ANN
+  
+  set.seed(1)
+  
+  model.ann = nnet(disease~., train_data, size = 5, type = "class", trace = FALSE, wgts = 0.1)
+  
+  pred = as.integer(predict(model.ann, select(test_data, -disease)))
+  
+  cfm = table(pred, test_data$disease)
+  
+  for (i in 1:nrow(cfm)) {
+    for (j in 1:ncol(cfm)) {
+      cm.ann[i, j] = cm.ann[i, j] + cfm[i, j]
+    }
+  }
+}
+
+plotnet(model.ann)
+
+
+### Confusion matrix
+
+cm.ann
+
+
+### Accuracy of ANN
+
+print(c("Precision:", precision(cm.ann)))
+print(c("Recall:", recall(cm.ann)))
+print(c("Accuracy:", accuracy(cm.ann)))
+
+
+### 10-Fold CV with Support Vector Machine
+
+# svm_data = tree_data
+
+# cm.svm = tbl
+
+# for (i in 0:9) {
+  
+  ### Split data
+  
+#   ind = partitions == i
+#   test_data = svm_data[ind, ]
+#   train_data = svm_data[-ind, ]
+  
+  ### Model for SVM
+  
+#   set.seed(1)
+  
+#   model.svm = svm(disease~., data = train_data, kernel = "linear", scale = FALSE)
+  
+#   pred = predict(model.svm, test_data[, c(1,9,15)])
+  
+#   cm.svm = cm.svm + table(pred, test_data[,15])
+  
+# }
+
+### Accuracy of Support Vector Machine
+
+# print(c("Precision:", precision(cm.svm)))
+# print(c("Recall:", recall(cm.svm)))
+# print(c("Accuracy:", accuracy(cm.svm)))
+
+
+### Comparisions
+
+rbind(c("Model", "Accuracy(%)"),c("Decision Tree", accuracy(cm.decision_tree)), c("Naive Bayes", accuracy(cm.naive_bayes)), c("ANN", accuracy(cm.ann)), c("SVM", "Not Determined: Very time consuming"))
+
+```
+
+
+# Patterns
+
+```{r}
+library(ggplot2)
+
+### Heartrate by Age with disease as color
+
+plt.1 = ggplot(data = merged_data) + 
+          geom_point(aes(x = age, y = heartRate, color=disease)) +
+          labs(title = "HeartRate by Age")
+
+
+### Heartrate by Age for Gender 0 with disease as color
+
+plt.1.g0 = ggplot(data = merged_data[merged_data$gender==0, ]) +
+            geom_point(aes(x = age, y = heartRate, color = disease)) +
+            labs(title = "HeartRate by Age for Gender 0")
+
+
+### Heartrate by Age for Gender 1 with disease as color
+
+plt.1.g1 = ggplot(data = merged_data[merged_data$gender==1, ]) +
+            geom_point(aes(x = age, y = heartRate, color = disease)) +
+            labs(title = "HeartRate by Age for Gender 1")
+
+
+### Heartrate by Ethnicity with disease as color
+
+plt.2 = ggplot(data = merged_data) + 
+          geom_point(aes(x = ethnic, y = heartRate, color = disease)) +
+          labs(title = "HeartRate by Ethnicity")
+
+
+### Heartrate by Ethnicity for Gender 0 with disease as color
+
+plt.2.g0 = ggplot(data = merged_data[merged_data$gender == 0,]) +
+            geom_point(aes(x = ethnic, y = heartRate, color = disease)) +
+            labs(title = "HeartRate by Ethnicity for Gender 0")
+
+
+### Heartrate by Ethnicity for Gender 1 with disease as color
+
+plt.2.g1 = ggplot(data = merged_data[merged_data$gender == 1,]) +
+            geom_point(aes(x = ethnic, y = heartRate, color = disease)) +
+            labs(title = "HeartRate by Ethnicity for Gender 1")
+
+
+### Heartrate by Weight with disease as color
+
+plt.3 = ggplot(data = merged_data) + 
+          geom_point(aes(x = weight, y = heartRate, color=disease)) +
+          labs(title = "HeartRate by Weight")
+
+
+### Heartrate by Weight for Gender 0 with disease as color
+
+plt.3.g0 = ggplot(data = merged_data[merged_data$gender == 0, ]) + 
+            geom_point(aes(x = weight, y = heartRate, color=disease)) +
+            labs(title = "HeartRate by Weight for Gender 0")
+
+
+### Heartrate by Weight for Gender 1 with disease as color
+
+plt.3.g1 = ggplot(data = merged_data[merged_data$gender == 1, ]) + 
+            geom_point(aes(x = weight, y = heartRate, color=disease)) +
+            labs(title = "HeartRate by Weight for Gender 1")
+
+
+### Cumulative Percentage of patients without disease by Age for Gender 0
+
+min_age = min(merged_data[,2])
+max_age = max(merged_data[,2])
+
+classes = seq(min_age, max_age+5, 5)
+percentage = seq(0, 0, length.out = length(classes))
+xlabs = rep("", length(percentage))
+
+data.1.g0 = merged_data[merged_data$gender == 0, c(2,16)]
+
+j = 1
+for(i in classes) {
+  disease = data.1.g0[data.1.g0$age<i, 2]
+  if(length(disease) > 0) {
+    percentage[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  xlabs[j] = paste("<", i)
+  j = j + 1
+}
+
+prcnt_by_age = as.data.frame(cbind(xlabs, percentage))
+prcnt_by_age[,2] = as.numeric(prcnt_by_age[,2])
+
+plt.1.p.g0 = ggplot(data = prcnt_by_age, aes(x = xlabs, y = percentage, group = 1)) +
+            geom_line() +
+            geom_point() +
+            labs(title = "Cumulative Percentage of Gender 0 without disease by Age", x="Patients of < x Age", y = "Cumulative % without Disease")
+
+
+### Cumulative Percentage of patients without disease by Heartrate for Gender 1
+
+min_hr = min(merged_data[,10])
+max_hr = max(merged_data[,10])
+
+classes = seq(min_hr, max_hr+5, 5)
+percentage = seq(0, 0, length.out = length(classes))
+xlabs = rep("", length(percentage))
+
+data.1.g1 = merged_data[merged_data$gender == 1, c(10,16)]
+
+j = 1
+for(i in classes) {
+  disease = data.1.g1[data.1.g1$heartRate<i, 2]
+  if(length(disease) > 0) {
+    percentage[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  xlabs[j] = paste("<", i)
+  j = j + 1
+}
+
+prcnt_by_hr = as.data.frame(cbind(xlabs, percentage))
+prcnt_by_hr[,2] = as.numeric(prcnt_by_hr[,2])
+prcnt_by_hr$xlabs = factor(prcnt_by_hr$xlabs, levels = prcnt_by_hr$xlabs)
+
+plt.1.p.g1 = ggplot(data = prcnt_by_hr, aes(x = xlabs, y = percentage, group = 1)) +
+              geom_line() +
+              geom_point() +
+              labs(title = "Cumulative Percentage of Gender 1 without disease by Heartrate", x="Patients with < x Heartrate", y = "Cumulative % without Disease")
+
+
+### Cumulative Percentage of patients (Ethnicity 0,3,4,5) without disease by Heartrate for Gender 1
+
+percentage.e0 = seq(0, 0, length.out = length(classes))
+percentage.e3 = percentage.e0
+percentage.e4 = percentage.e0
+percentage.e5 = percentage.e0
+
+xlabs = rep("", length(percentage.e0))
+
+data.2.g1 = merged_data[merged_data$gender == 1, c(10,3,16)]
+
+j = 1
+for(i in classes) {
+  disease = data.2.g1[data.2.g1$ethnic == 0 & data.2.g1$heartRate<i, 3]
+  if(length(disease) > 0) {
+    percentage.e0[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  
+  disease = data.2.g1[data.2.g1$ethnic == 3 & data.2.g1$heartRate<i, 3]
+  if(length(disease) > 0) {
+    percentage.e3[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  
+  disease = data.2.g1[data.2.g1$ethnic == 4 & data.2.g1$heartRate<i, 3]
+  if(length(disease) > 0) {
+    percentage.e4[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  
+  disease = data.2.g1[data.2.g1$ethnic == 5 & data.2.g1$heartRate<i, 3]
+  if(length(disease) > 0) {
+    percentage.e5[j] = (length(disease[disease==1])/length(disease)) * 100
+  }
+  
+  xlabs[j] = paste("<", i)
+  j = j + 1
+}
+
+prcnt_by_hr = as.data.frame(cbind(xlabs, percentage.e0, percentage.e3, percentage.e4, percentage.e5))
+for(i in c(2:5)) {
+  prcnt_by_hr[,i] = as.numeric(prcnt_by_hr[,i])
+}
+prcnt_by_hr$xlabs = factor(prcnt_by_hr$xlabs, levels = prcnt_by_hr$xlabs)
+
+colors = c("Ethnic 0" = "skyblue","Ethnic 3" = "hotpink", "Ethnic 4" = "springgreen", "Ethnic 5" = "grey36")
+
+plt.2.p.g1 = ggplot(data = prcnt_by_hr, aes(x = xlabs, group = 1)) +
+              geom_line(aes(y = percentage.e0, color = "Ethnic 0")) +
+              geom_point(aes(y = percentage.e0), color = "blue") +
+              geom_line(aes(y = percentage.e3, color = "Ethnic 3")) +
+              geom_point(aes(y = percentage.e3), color = "red") +
+              geom_line(aes(y = percentage.e4, color = "Ethnic 4")) +
+              geom_point(aes(y = percentage.e4), color = "green4") +
+              geom_line(aes(y = percentage.e5, color = "Ethnic 5")) +
+              geom_point(aes(y = percentage.e5), color = "grey0") +
+              labs(title = "Cumulative Percentage of Gender 1 without disease by Heartrate", x="Patients with < x Heartrate", y = "Cumulative % without Disease", color = "Legends", scale_color_manual(values = colors))
+
+
+### Plots
+
+par(mfrow=c(1,3))
+plt.1
+plt.1.g0
+plt.1.g1
+
+par(mfrow=c(1,2))
+plt.1.p.g0
+plt.1.p.g1
+
+par(mfrow=c(1,3))
+plt.2
+plt.2.g0
+plt.2.g1
+
+par(mfrow=c(1,1))
+plt.2.p.g1
+
+par(mfrow=c(1,3))
+plt.3
+plt.3.g0
+plt.3.g1
+
+
+
+```
+
+# KMeans clustering
+
+```{r}
+library(stats)
+
+xscale = tree_data
+
+for (i in c(1,7,8,9)){
+  xscale[,i]=minmax(xscale[,i])
+}
+
+set.seed(1)
+
+model.km = kmeans(xscale[,c(1,7,9)], 3)
+
+model.km$centers
+model.km$withinss
+
+xscale$cluster = as.character(model.km$cluster)
+
+plt.kmeans.c1 = ggplot(data = xscale[xscale$cluster == 1, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 1: Heartrate by Age", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+plt.kmeans.c1.tb = ggplot(data = xscale[xscale$cluster == 1 & xscale$testB >= 60, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 1: Heartrate by Age with testB result >= 60", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+plt.kmeans.c2 = ggplot(data = xscale[xscale$cluster == 2, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 2: Heartrate by Age", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+plt.kmeans.c2.g1 = ggplot(data = xscale[xscale$cluster == 2 & xscale$gender == 1, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 2: Heartrate by Age for Gender 1", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+plt.kmeans.c3 = ggplot(data = xscale[xscale$cluster == 3, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 3: Heartrate by Age", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+plt.kmeans.c3.tb = ggplot(data = xscale[xscale$cluster == 3 & xscale$testB >= 60, ]) + 
+  geom_point(aes(x = age, y = heartRate, colour = disease)) +
+  labs(title="Cluster 3: Heartrate by Age with testB result >= 60", x = "Age (Scaled)", y = "Heartrate (Scaled)")
+
+
+plt.kmeans.c1
+plt.kmeans.c1.tb
+plt.kmeans.c2
+plt.kmeans.c2.g1
+plt.kmeans.c3
+plt.kmeans.c3.tb
+
+```
